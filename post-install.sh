@@ -90,9 +90,9 @@ main() {
   print_step "Post-install concluído com sucesso!"
   print_info "Resumo das configurações aplicadas:"
   print_info "✓ Sistema atualizado via yay"
-  print_info "✓ Aplicativos desktop instalados"
-  print_info "✓ Locale configurado para pt_BR.UTF-8"
-  print_info "✓ Layout de teclado US/BR configurado (Alt+Alt para alternar)"
+  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack)"
+  print_info "✓ Locale configurado (interface EN, formatação BR)"
+  print_info "✓ Layout de teclado US-Intl configurado (compose:caps para acentos)"
   print_info "✓ GNOME Keyring configurado para unlock automático"
   print_info "✓ Atalhos do Hyprland configurados (Signal comentado, WhatsApp → ZapZap)"
   print_info ""
@@ -101,32 +101,48 @@ main() {
 }
 
 set_locale_ptbr() {
-  print_step "Configurando locale pt_BR.UTF-8"
+  print_step "Configurando locale (interface EN, formatação BR)"
 
-  # Garante que a linha exista e esteja descomentada em /etc/locale.gen
-  if ! grep -Eq '^[^#]*pt_BR\.UTF-8\s+UTF-8' /etc/locale.gen 2>/dev/null; then
-    # Tenta descomentar, caso exista comentada
-    if grep -Eq '^#\s*pt_BR\.UTF-8\s+UTF-8' /etc/locale.gen 2>/dev/null; then
-      sudo sed -i 's/^#\s*pt_BR\.UTF-8\s\+UTF-8/pt_BR.UTF-8 UTF-8/' /etc/locale.gen || true
-    else
-      printf '\npt_BR.UTF-8 UTF-8\n' | sudo tee -a /etc/locale.gen >/dev/null || true
+  # Garante que as linhas existam e estejam descomentadas em /etc/locale.gen
+  for locale in "en_US.UTF-8 UTF-8" "pt_BR.UTF-8 UTF-8"; do
+    if ! grep -Eq "^[^#]*${locale//./\\.}" /etc/locale.gen 2>/dev/null; then
+      # Tenta descomentar, caso exista comentada
+      if grep -Eq "^#\\s*${locale//./\\.}" /etc/locale.gen 2>/dev/null; then
+        sudo sed -i "s/^#\\s*${locale//./\\.}/${locale}/" /etc/locale.gen || true
+      else
+        printf '\n%s\n' "$locale" | sudo tee -a /etc/locale.gen >/dev/null || true
+      fi
     fi
-  fi
+  done
 
   # Gera locales
   sudo locale-gen
 
-  # Define locale do sistema
-  if localectl status 2>/dev/null | grep -q 'LANG=pt_BR.UTF-8'; then
-    print_info "Locale já definido para pt_BR.UTF-8"
+  # Define locale do sistema: interface em inglês, formatação brasileira
+  local target_locale="LANG=en_US.UTF-8
+LC_CTYPE=pt_BR.UTF-8
+LC_NUMERIC=pt_BR.UTF-8
+LC_TIME=pt_BR.UTF-8
+LC_COLLATE=pt_BR.UTF-8
+LC_MONETARY=pt_BR.UTF-8
+LC_MESSAGES=en_US.UTF-8
+LC_PAPER=pt_BR.UTF-8
+LC_NAME=pt_BR.UTF-8
+LC_ADDRESS=pt_BR.UTF-8
+LC_TELEPHONE=pt_BR.UTF-8
+LC_MEASUREMENT=pt_BR.UTF-8
+LC_IDENTIFICATION=pt_BR.UTF-8"
+
+  if localectl status 2>/dev/null | grep -q 'LANG=en_US.UTF-8'; then
+    print_info "Locale já configurado corretamente"
   else
-    sudo localectl set-locale LANG=pt_BR.UTF-8
-    print_info "Locale definido: LANG=pt_BR.UTF-8"
+    sudo localectl set-locale LANG=en_US.UTF-8
+    print_info "Locale definido: interface EN, formatação BR"
   fi
 }
 
 configure_keyboard_layout() {
-  print_step "Configurando layout de teclado PT-BR (Hyprland + Waybar)"
+  print_step "Configurando layout de teclado US-Intl (Hyprland + Waybar)"
 
   # Hyprland input.conf
   local hypr_input="$HOME/.config/hypr/input.conf"
@@ -156,32 +172,32 @@ configure_keyboard_layout() {
     # Remove configurações duplicadas fora do bloco input
     sed -i -E "/^input\s*\{/,/^\}/!{/^\s*${layout_key}\s*=/d; /^\s*${variant_key}\s*=/d; /^\s*${options_key}\s*=/d;}" "$hypr_input"
 
-    # Define layout us,br dentro do bloco input
+    # Define layout us dentro do bloco input
     if grep -qE "^\s*${layout_key}\s*=" "$hypr_input"; then
-      sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us,br/" "$hypr_input"
+      sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us/" "$hypr_input"
     else
       # Adiciona dentro do bloco input, antes do fechamento
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${layout_key} = us,br" "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${layout_key} = us,br" "$hypr_input"
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${layout_key} = us" "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${layout_key} = us" "$hypr_input"
     fi
 
-    # Define options compose:caps,grp:alts_toggle dentro do bloco input
+    # Define options compose:caps dentro do bloco input
     if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
-      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps,grp:alts_toggle/" "$hypr_input"
+      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
     else
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${options_key} = compose:caps,grp:alts_toggle" "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${options_key} = compose:caps,grp:alts_toggle" "$hypr_input"
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${options_key} = compose:caps" "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${options_key} = compose:caps" "$hypr_input"
     fi
 
-    # Define variant intl, dentro do bloco input
+    # Define variant intl dentro do bloco input
     if grep -qE "^\s*${variant_key}\s*=" "$hypr_input"; then
-      sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl,/" "$hypr_input"
+      sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl/" "$hypr_input"
     else
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${variant_key} = intl," "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${variant_key} = intl," "$hypr_input"
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${variant_key} = intl" "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${variant_key} = intl" "$hypr_input"
     fi
 
-    print_info "Hyprland: ${layout_key}/variants/options configurados (Alt+Alt alterna)"
+    print_info "Hyprland: ${layout_key}/variants/options configurados (US-Intl com compose:caps)"
   else
     print_warn "Hyprland: arquivo não encontrado: $hypr_input (pulando)"
   fi
@@ -233,7 +249,7 @@ configure_keyboard_layout() {
 
 install_desktop_apps() {
   print_step "Instalando aplicativos desktop"
-  local pkgs=(mission-center discord zapzap cpu-x)
+  local pkgs=(mission-center discord zapzap cpu-x slack-desktop)
   yay -S --noconfirm --needed "${pkgs[@]}"
   print_info "Aplicativos desktop instalados/atualizados"
 }
@@ -249,15 +265,7 @@ configure_gnome_keyring() {
   print_info "Parando processos problemáticos..."
   pkill -f gnome-keyring-daemon || true
   pkill -f chrome || true
-  pkill -f dropbox || true
   sleep 2
-  
-  # Desabilita autostart do Dropbox (que causa Chrome automático)
-  print_info "Desabilitando autostart do Dropbox..."
-  if [[ -f "$HOME/.config/autostart/dropbox.desktop" ]]; then
-    mv "$HOME/.config/autostart/dropbox.desktop" "$HOME/.config/autostart/dropbox.desktop.disabled"
-    print_info "Dropbox autostart desabilitado"
-  fi
   
   # Remove autostart conflitante do gnome-keyring-ssh
   print_info "Removendo autostart conflitante do keyring..."
@@ -346,8 +354,8 @@ SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/keyring/ssh
 GNOME_KEYRING_CONTROL=$XDG_RUNTIME_DIR/keyring
 EOF
   
-  # Configura Chrome para não usar keyring
-  print_info "Configurando Chrome para não usar keyring..."
+  # Configura Chrome para usar keyring corretamente
+  print_info "Configurando Chrome para usar keyring..."
   local chrome_flags="$HOME/.config/chrome-flags.conf"
   mkdir -p "$(dirname "$chrome_flags")"
   
@@ -356,8 +364,8 @@ EOF
     sed -i '/password-store/d' "$chrome_flags"
   fi
   
-  # Adiciona configuração para não usar keyring
-  echo "--password-store=basic" >> "$chrome_flags"
+  # Adiciona configuração para usar keyring (não basic)
+  echo "--password-store=gnome" >> "$chrome_flags"
   echo "--enable-features=UseOzonePlatform" >> "$chrome_flags"
   echo "--ozone-platform=wayland" >> "$chrome_flags"
   
@@ -365,8 +373,7 @@ EOF
   print_warn "IMPORTANTE: Após reiniciar o sistema:"
   print_warn "1. O Chrome não abrirá automaticamente"
   print_warn "2. O keyring será desbloqueado automaticamente"
-  print_warn "3. O Chrome não pedirá senha do keyring"
-  print_warn "4. Para usar o Dropbox: execute 'dropbox start' manualmente"
+  print_warn "3. O Chrome usará o keyring para senhas (sem pedir senha)"
 }
 
 configure_hyprland_bindings() {
