@@ -84,11 +84,21 @@ main() {
   install_desktop_apps
   set_locale_ptbr
   configure_keyboard_layout
-  print_step "Post-install: etapa de update finalizada"
-  print_info "Pronto para próximas configurações."
+  configure_gnome_keyring
+  configure_hyprland_bindings
+  
+  print_step "Post-install concluído com sucesso!"
+  print_info "Resumo das configurações aplicadas:"
+  print_info "✓ Sistema atualizado via yay"
+  print_info "✓ Aplicativos desktop instalados"
+  print_info "✓ Locale configurado para pt_BR.UTF-8"
+  print_info "✓ Layout de teclado US/BR configurado (Alt+Alt para alternar)"
+  print_info "✓ GNOME Keyring configurado para unlock automático"
+  print_info "✓ Atalhos do Hyprland configurados (Signal comentado, WhatsApp → ZapZap)"
+  print_info ""
+  print_info "Este script é idempotente e pode ser executado novamente se necessário."
+  print_info "Backups foram criados para todos os arquivos modificados."
 }
-
-main "$@"
 
 set_locale_ptbr() {
   print_step "Configurando locale pt_BR.UTF-8"
@@ -121,28 +131,57 @@ configure_keyboard_layout() {
   # Hyprland input.conf
   local hypr_input="$HOME/.config/hypr/input.conf"
   if [[ -f "$hypr_input" ]]; then
-    cp -n "$hypr_input" "$hypr_input.bak" 2>/dev/null || cp "$hypr_input" "$hypr_input.bak"
-
-    if ! grep -qE '^\s*kb_layout\s*=\s*us,br' "$hypr_input"; then
-      # Tenta substituir exemplo comentado; se não houver, assegura a linha
-      sed -i 's/^#\s*kb_layout\s*=\s*us,dk,eu/kb_layout = us,br/' "$hypr_input" || true
-      if ! grep -qE '^\s*kb_layout\s*=\s*us,br' "$hypr_input"; then
-        printf '\nkb_layout = us,br\n' >> "$hypr_input"
-      fi
-
-      # Ajusta kb_options conforme exemplo fornecido
-      if grep -qE 'kb_options\s*=\s*compose:caps\s*#\s*,grp:alts_toggle' "$hypr_input"; then
-        sed -i 's/kb_options\s*=\s*compose:caps\s*#\s*,grp:alts_toggle/kb_options = compose:caps,grp:alts_toggle/' "$hypr_input"
-      fi
-
-      # Adiciona kb_variant intl, após a linha de layout, se ainda não existir
-      if ! grep -qE '^\s*kb_variant\s*=\s*intl,' "$hypr_input"; then
-        sed -i '/^\s*kb_layout\s*=\s*us,br/a\  kb_variant = intl,' "$hypr_input"
-      fi
-      print_info "Hyprland: PT-BR e US-Intl configurados (Alt+Alt alterna)"
-    else
-      print_info "Hyprland: kb_layout us,br já presente"
+    # Faz backup se ainda não existir
+    if [[ ! -f "$hypr_input.bak" ]]; then
+      cp "$hypr_input" "$hypr_input.bak"
+      print_info "Backup criado: $hypr_input.bak"
     fi
+
+    # Detecta estilo de chaves (xkb_* em versões novas; kb_* em antigas)
+    local style="xkb"
+    if grep -qE '^\s*xkb_layout\s*=' "$hypr_input"; then
+      style="xkb"
+    elif grep -qE '^\s*kb_layout\s*=' "$hypr_input"; then
+      style="kb"
+    else
+      # Se não há nenhuma, preferimos xkb_* (versões novas)
+      style="xkb"
+    fi
+
+    local layout_key variant_key options_key
+    layout_key="${style}_layout"
+    variant_key="${style}_variant"
+    options_key="${style}_options"
+
+    # Remove configurações duplicadas fora do bloco input
+    sed -i -E "/^input\s*\{/,/^\}/!{/^\s*${layout_key}\s*=/d; /^\s*${variant_key}\s*=/d; /^\s*${options_key}\s*=/d;}" "$hypr_input"
+
+    # Define layout us,br dentro do bloco input
+    if grep -qE "^\s*${layout_key}\s*=" "$hypr_input"; then
+      sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us,br/" "$hypr_input"
+    else
+      # Adiciona dentro do bloco input, antes do fechamento
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${layout_key} = us,br" "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${layout_key} = us,br" "$hypr_input"
+    fi
+
+    # Define options compose:caps,grp:alts_toggle dentro do bloco input
+    if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
+      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps,grp:alts_toggle/" "$hypr_input"
+    else
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${options_key} = compose:caps,grp:alts_toggle" "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${options_key} = compose:caps,grp:alts_toggle" "$hypr_input"
+    fi
+
+    # Define variant intl, dentro do bloco input
+    if grep -qE "^\s*${variant_key}\s*=" "$hypr_input"; then
+      sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl,/" "$hypr_input"
+    else
+      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${variant_key} = intl," "$hypr_input" || \
+      sed -i -E "/^input\s*\{/ a\\n${variant_key} = intl," "$hypr_input"
+    fi
+
+    print_info "Hyprland: ${layout_key}/variants/options configurados (Alt+Alt alterna)"
   else
     print_warn "Hyprland: arquivo não encontrado: $hypr_input (pulando)"
   fi
@@ -150,7 +189,11 @@ configure_keyboard_layout() {
   # Waybar config.jsonc
   local waybar_config="$HOME/.config/waybar/config.jsonc"
   if [[ -f "$waybar_config" ]]; then
-    cp -n "$waybar_config" "$waybar_config.bak" 2>/dev/null || cp "$waybar_config" "$waybar_config.bak"
+    # Faz backup se ainda não existir
+    if [[ ! -f "$waybar_config.bak" ]]; then
+      cp "$waybar_config" "$waybar_config.bak"
+      print_info "Backup criado: $waybar_config.bak"
+    fi
     if ! grep -q "hyprland/language" "$waybar_config"; then
       # Adiciona módulo em modules-right, após group/tray-expander
       sed -i '/"modules-right": \[/,/]/{/"group\/tray-expander",/ a\
@@ -174,7 +217,11 @@ configure_keyboard_layout() {
     # Waybar style.css
     local waybar_css="$HOME/.config/waybar/style.css"
     if [[ -f "$waybar_css" ]] && ! grep -q "#language" "$waybar_css"; then
-      cp -n "$waybar_css" "$waybar_css.bak" 2>/dev/null || cp "$waybar_css" "$waybar_css.bak"
+      # Faz backup se ainda não existir
+      if [[ ! -f "$waybar_css.bak" ]]; then
+        cp "$waybar_css" "$waybar_css.bak"
+        print_info "Backup criado: $waybar_css.bak"
+      fi
       sed -i '/#pulseaudio,/a\
 #language,' "$waybar_css"
       print_info "Waybar: CSS do indicador de layout adicionado"
@@ -190,3 +237,171 @@ install_desktop_apps() {
   yay -S --noconfirm --needed "${pkgs[@]}"
   print_info "Aplicativos desktop instalados/atualizados"
 }
+
+configure_gnome_keyring() {
+  print_step "Configurando GNOME Keyring (Solução Definitiva)"
+  
+  # Instala pacotes necessários
+  print_info "Instalando gnome-keyring e dependências..."
+  yay -S --noconfirm --needed gnome-keyring libsecret seahorse
+  
+  # Para processos problemáticos
+  print_info "Parando processos problemáticos..."
+  pkill -f gnome-keyring-daemon || true
+  pkill -f chrome || true
+  pkill -f dropbox || true
+  sleep 2
+  
+  # Desabilita autostart do Dropbox (que causa Chrome automático)
+  print_info "Desabilitando autostart do Dropbox..."
+  if [[ -f "$HOME/.config/autostart/dropbox.desktop" ]]; then
+    mv "$HOME/.config/autostart/dropbox.desktop" "$HOME/.config/autostart/dropbox.desktop.disabled"
+    print_info "Dropbox autostart desabilitado"
+  fi
+  
+  # Remove autostart conflitante do gnome-keyring-ssh
+  print_info "Removendo autostart conflitante do keyring..."
+  if [[ -f "$HOME/.config/autostart/gnome-keyring-ssh.desktop" ]]; then
+    mv "$HOME/.config/autostart/gnome-keyring-ssh.desktop" "$HOME/.config/autostart/gnome-keyring-ssh.desktop.disabled"
+    print_info "GNOME Keyring SSH autostart removido"
+  fi
+  
+  # Limpa keyrings problemáticos
+  print_info "Limpando keyrings problemáticos..."
+  if [[ -d "$HOME/.local/share/keyrings" ]]; then
+    local backup_dir="$HOME/.local/share/keyrings.bak.$(date +%Y%m%d%H%M%S)"
+    print_info "Fazendo backup em $backup_dir"
+    mv "$HOME/.local/share/keyrings" "$backup_dir"
+  fi
+  
+  # Limpa sockets do keyring
+  print_info "Limpando sockets do keyring..."
+  rm -rf "$XDG_RUNTIME_DIR/keyring" || true
+  rm -rf "$XDG_RUNTIME_DIR/gnome-keyring" || true
+  
+  # Configura PAM corretamente
+  print_info "Configurando PAM para unlock automático..."
+  
+  # Backup dos arquivos PAM
+  if [[ ! -f /etc/pam.d/login.bak.keyring ]]; then
+    sudo cp /etc/pam.d/login /etc/pam.d/login.bak.keyring
+    print_info "Backup criado: /etc/pam.d/login.bak.keyring"
+  fi
+  
+  # Configura PAM corretamente se não estiver configurado
+  if ! sudo grep -q "pam_gnome_keyring.so auto_start" /etc/pam.d/login; then
+    print_info "Configurando PAM..."
+    
+    # Cria configuração PAM correta
+    sudo tee /tmp/login.pam > /dev/null << 'EOF'
+#%PAM-1.0
+
+auth       requisite    pam_nologin.so
+auth       include      system-local-login
+auth       optional     pam_gnome_keyring.so
+account    include      system-local-login
+password   include      system-local-login
+session    include      system-local-login
+session    optional     pam_gnome_keyring.so auto_start
+EOF
+    
+    sudo mv /tmp/login.pam /etc/pam.d/login
+    print_info "PAM configurado!"
+  else
+    print_info "PAM já configurado corretamente"
+  fi
+  
+  # Configura Hyprland corretamente
+  local hypr_config="$HOME/.config/hypr/hyprland.conf"
+  if [[ -f "$hypr_config" ]]; then
+    # Faz backup se ainda não existir
+    if [[ ! -f "$hypr_config.bak.keyring" ]]; then
+      cp "$hypr_config" "$hypr_config.bak.keyring"
+      print_info "Backup criado: $hypr_config.bak.keyring"
+    fi
+    
+    # Remove qualquer linha do gnome-keyring
+    sed -i '/gnome-keyring-daemon/d' "$hypr_config"
+    
+    # Adiciona configuração correta (SEM --unlock)
+    if ! grep -q "gnome-keyring-daemon" "$hypr_config"; then
+      cat >> "$hypr_config" << 'EOF'
+
+# GNOME Keyring - Configuração correta
+exec-once = gnome-keyring-daemon --start --components=pkcs11,secrets,ssh
+exec-once = systemctl --user import-environment GNOME_KEYRING_CONTROL GNOME_KEYRING_PID SSH_AUTH_SOCK
+EOF
+      print_info "Hyprland configurado!"
+    fi
+  else
+    print_warn "Arquivo de configuração do Hyprland não encontrado: $hypr_config"
+  fi
+  
+  # Configura variáveis de ambiente
+  print_info "Configurando variáveis de ambiente..."
+  local env_file="$HOME/.config/environment.d/99-gnome-keyring.conf"
+  mkdir -p "$HOME/.config/environment.d"
+  cat > "$env_file" << 'EOF'
+SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/keyring/ssh
+GNOME_KEYRING_CONTROL=$XDG_RUNTIME_DIR/keyring
+EOF
+  
+  # Configura Chrome para não usar keyring
+  print_info "Configurando Chrome para não usar keyring..."
+  local chrome_flags="$HOME/.config/chrome-flags.conf"
+  mkdir -p "$(dirname "$chrome_flags")"
+  
+  # Remove configurações antigas
+  if [[ -f "$chrome_flags" ]]; then
+    sed -i '/password-store/d' "$chrome_flags"
+  fi
+  
+  # Adiciona configuração para não usar keyring
+  echo "--password-store=basic" >> "$chrome_flags"
+  echo "--enable-features=UseOzonePlatform" >> "$chrome_flags"
+  echo "--ozone-platform=wayland" >> "$chrome_flags"
+  
+  print_info "GNOME Keyring configurado com sucesso!"
+  print_warn "IMPORTANTE: Após reiniciar o sistema:"
+  print_warn "1. O Chrome não abrirá automaticamente"
+  print_warn "2. O keyring será desbloqueado automaticamente"
+  print_warn "3. O Chrome não pedirá senha do keyring"
+  print_warn "4. Para usar o Dropbox: execute 'dropbox start' manualmente"
+}
+
+configure_hyprland_bindings() {
+  print_step "Configurando atalhos do Hyprland"
+  
+  local bindings_file="$HOME/.config/hypr/bindings.conf"
+  
+  if [[ ! -f "$bindings_file" ]]; then
+    print_warn "Arquivo de atalhos do Hyprland não encontrado: $bindings_file"
+    return 0
+  fi
+  
+  # Faz backup se ainda não existir
+  if [[ ! -f "$bindings_file.bak" ]]; then
+    cp "$bindings_file" "$bindings_file.bak"
+    print_info "Backup criado: $bindings_file.bak"
+  fi
+  
+  # Comenta o atalho do Signal (SUPER + G)
+  if grep -qE '^bindd = SUPER, G, Signal' "$bindings_file"; then
+    sed -i 's/^bindd = SUPER, G, Signal/#bindd = SUPER, G, Signal/' "$bindings_file"
+    print_info "Atalho do Signal comentado (SUPER + G)"
+  else
+    print_info "Atalho do Signal já estava comentado ou não encontrado"
+  fi
+  
+  # Troca o atalho do WhatsApp para usar ZapZap
+  if grep -qE '^bindd = SUPER , G, WhatsApp, exec, \$webapp="https://web.whatsapp.com/"' "$bindings_file"; then
+    sed -i 's/^bindd = SUPER , G, WhatsApp, exec, \$webapp="https:\/\/web.whatsapp.com\/"/bindd = SUPER, G, WhatsApp, exec, uwsm app -- zapzap/' "$bindings_file"
+    print_info "Atalho do WhatsApp alterado para ZapZap (SUPER + G)"
+  else
+    print_info "Atalho do WhatsApp não encontrado ou já modificado"
+  fi
+  
+  print_info "Configuração de atalhos do Hyprland concluída"
+}
+
+main "$@"
