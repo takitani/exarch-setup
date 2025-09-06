@@ -74,8 +74,27 @@ ensure_yay() {
 
 update_system() {
   print_step "Atualizando o sistema com yay"
-  yay -Syu --noconfirm
-  print_info "Atualização concluída."
+  
+  # Tenta atualizar com retry em caso de falha de conexão AUR
+  local max_retries=3
+  local retry_count=0
+  
+  while [[ $retry_count -lt $max_retries ]]; do
+    if yay -Syu --noconfirm; then
+      print_info "Atualização concluída."
+      return 0
+    else
+      retry_count=$((retry_count + 1))
+      if [[ $retry_count -lt $max_retries ]]; then
+        print_warn "Falha na atualização (tentativa $retry_count de $max_retries). Tentando novamente em 5 segundos..."
+        sleep 5
+      else
+        print_warn "Falha na atualização após $max_retries tentativas. Continuando com o script..."
+        print_info "Você pode executar 'yay -Syu' manualmente mais tarde."
+        return 0  # Não falha o script inteiro
+      fi
+    fi
+  done
 }
 
 main() {
@@ -86,15 +105,19 @@ main() {
   configure_keyboard_layout
   configure_gnome_keyring
   configure_hyprland_bindings
+  configure_omarchy_logout
+  configure_autostart
   
   print_step "Post-install concluído com sucesso!"
   print_info "Resumo das configurações aplicadas:"
   print_info "✓ Sistema atualizado via yay"
-  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack)"
+  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack, Chrome, Cursor, VSCode, Clipse)"
   print_info "✓ Locale configurado (interface EN, formatação BR)"
-  print_info "✓ Layout de teclado US-Intl configurado (compose:caps para acentos)"
+  print_info "✓ Layout de teclado US-Intl configurado com cedilha correto (ç)"
   print_info "✓ GNOME Keyring configurado para unlock automático"
   print_info "✓ Atalhos do Hyprland configurados (Signal comentado, WhatsApp → ZapZap)"
+  print_info "✓ Menu de power do Omarchy configurado (Logout adicionado)"
+  print_info "✓ Autostart configurado (ZapZap e Slack no workspace 2)"
   print_info ""
   print_info "Este script é idempotente e pode ser executado novamente se necessário."
   print_info "Backups foram criados para todos os arquivos modificados."
@@ -119,30 +142,95 @@ set_locale_ptbr() {
   sudo locale-gen
 
   # Define locale do sistema: interface em inglês, formatação brasileira
-  local target_locale="LANG=en_US.UTF-8
-LC_CTYPE=pt_BR.UTF-8
-LC_NUMERIC=pt_BR.UTF-8
-LC_TIME=pt_BR.UTF-8
-LC_COLLATE=pt_BR.UTF-8
-LC_MONETARY=pt_BR.UTF-8
-LC_MESSAGES=en_US.UTF-8
-LC_PAPER=pt_BR.UTF-8
-LC_NAME=pt_BR.UTF-8
-LC_ADDRESS=pt_BR.UTF-8
-LC_TELEPHONE=pt_BR.UTF-8
-LC_MEASUREMENT=pt_BR.UTF-8
-LC_IDENTIFICATION=pt_BR.UTF-8"
-
-  if localectl status 2>/dev/null | grep -q 'LANG=en_US.UTF-8'; then
-    print_info "Locale já configurado corretamente"
+  # IMPORTANTE: LC_CTYPE=pt_BR.UTF-8 é CRÍTICO para o cedilha funcionar!
+  if ! localectl status 2>/dev/null | grep -q 'LC_CTYPE=pt_BR.UTF-8'; then
+    print_info "Configurando LC_CTYPE para pt_BR (essencial para cedilha)..."
+    sudo localectl set-locale LANG=en_US.UTF-8 LC_CTYPE=pt_BR.UTF-8
+    print_info "Locale definido: LANG=en_US.UTF-8, LC_CTYPE=pt_BR.UTF-8"
   else
-    sudo localectl set-locale LANG=en_US.UTF-8
-    print_info "Locale definido: interface EN, formatação BR"
+    print_info "Locale já configurado corretamente (LC_CTYPE=pt_BR.UTF-8)"
   fi
 }
 
 configure_keyboard_layout() {
-  print_step "Configurando layout de teclado US-Intl (Hyprland + Waybar)"
+  print_step "Configurando layout de teclado US-Intl com cedilha (Hyprland + Waybar)"
+
+  # Configura variáveis de ambiente para cedilha correto
+  local env_file="$HOME/.config/environment.d/50-cedilla.conf"
+  mkdir -p "$HOME/.config/environment.d"
+  
+  if [[ ! -f "$env_file" ]] || ! grep -q "GTK_IM_MODULE=cedilla" "$env_file"; then
+    cat > "$env_file" << 'EOF'
+# Configuração para cedilha correto (ç ao invés de ć)
+GTK_IM_MODULE=cedilla
+QT_IM_MODULE=cedilla
+EOF
+    print_info "Variáveis de ambiente para cedilha configuradas em $env_file"
+  else
+    print_info "Variáveis de ambiente para cedilha já configuradas"
+  fi
+
+  # Adiciona ao .bashrc se não existir
+  if ! grep -q "export GTK_IM_MODULE=cedilla" "$HOME/.bashrc"; then
+    cat >> "$HOME/.bashrc" << 'EOF'
+
+# Configuração para cedilha correto (ç ao invés de ć)
+export GTK_IM_MODULE=cedilla
+export QT_IM_MODULE=cedilla
+EOF
+    print_info "Variáveis de cedilha adicionadas ao .bashrc"
+  else
+    print_info "Variáveis de cedilha já existem no .bashrc"
+  fi
+
+  # Configura .XCompose para cedilha correto
+  local xcompose_file="$HOME/.XCompose"
+  local needs_cedilla_config=true
+  
+  # Verifica se já tem configuração de cedilha
+  if [[ -f "$xcompose_file" ]] && grep -q "ccedilla" "$xcompose_file"; then
+    needs_cedilla_config=false
+    print_info ".XCompose já configurado para cedilha"
+  fi
+  
+  if [[ "$needs_cedilla_config" == true ]]; then
+    # Faz backup se o arquivo existe
+    if [[ -f "$xcompose_file" ]]; then
+      cp "$xcompose_file" "$xcompose_file.bak"
+      print_info "Backup criado: $xcompose_file.bak"
+    fi
+    
+    # Cria configuração de cedilha
+    cat > "$xcompose_file" << 'EOF'
+include "%L"
+
+# Cedilha (ç/Ç) configuration for US International keyboard
+<dead_acute> <c> : "ç" ccedilla
+<dead_acute> <C> : "Ç" Ccedilla
+<acute> <c> : "ç" ccedilla
+<acute> <C> : "Ç" Ccedilla
+<apostrophe> <c> : "ç" ccedilla
+<apostrophe> <C> : "Ç" Ccedilla
+<'> <c> : "ç" ccedilla
+<'> <C> : "Ç" Ccedilla
+
+EOF
+    
+    # Se tinha conteúdo anterior, adiciona de volta
+    if [[ -f "$xcompose_file.bak" ]]; then
+      cat "$xcompose_file.bak" >> "$xcompose_file"
+    fi
+    
+    print_info ".XCompose configurado para cedilha correto"
+  fi
+  
+  # Cria também para GTK3 (necessário para algumas aplicações)
+  local gtk_compose="$HOME/.config/gtk-3.0/Compose"
+  if [[ ! -f "$gtk_compose" ]] || ! grep -q "ccedilla" "$gtk_compose" 2>/dev/null; then
+    mkdir -p "$HOME/.config/gtk-3.0"
+    cp "$xcompose_file" "$gtk_compose" 2>/dev/null || true
+    print_info "GTK3 Compose configurado para cedilha"
+  fi
 
   # Hyprland input.conf
   local hypr_input="$HOME/.config/hypr/input.conf"
@@ -172,7 +260,7 @@ configure_keyboard_layout() {
     # Remove configurações duplicadas fora do bloco input
     sed -i -E "/^input\s*\{/,/^\}/!{/^\s*${layout_key}\s*=/d; /^\s*${variant_key}\s*=/d; /^\s*${options_key}\s*=/d;}" "$hypr_input"
 
-    # Define layout us dentro do bloco input
+    # Define layout us dentro do bloco input (apenas US Internacional)
     if grep -qE "^\s*${layout_key}\s*=" "$hypr_input"; then
       sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us/" "$hypr_input"
     else
@@ -181,7 +269,7 @@ configure_keyboard_layout() {
       sed -i -E "/^input\s*\{/ a\\n${layout_key} = us" "$hypr_input"
     fi
 
-    # Define options compose:caps dentro do bloco input
+    # Define options compose:caps dentro do bloco input (sem toggle de layout)
     if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
       sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
     else
@@ -197,7 +285,7 @@ configure_keyboard_layout() {
       sed -i -E "/^input\s*\{/ a\\n${variant_key} = intl" "$hypr_input"
     fi
 
-    print_info "Hyprland: ${layout_key}/variants/options configurados (US-Intl com compose:caps)"
+    print_info "Hyprland: ${layout_key}/variants/options configurados (US-Intl com cedilha)"
   else
     print_warn "Hyprland: arquivo não encontrado: $hypr_input (pulando)"
   fi
@@ -249,45 +337,101 @@ configure_keyboard_layout() {
 
 install_desktop_apps() {
   print_step "Instalando aplicativos desktop"
-  local pkgs=(mission-center discord zapzap cpu-x slack-desktop)
-  yay -S --noconfirm --needed "${pkgs[@]}"
-  print_info "Aplicativos desktop instalados/atualizados"
+  local pkgs=(mission-center discord zapzap cpu-x slack-desktop google-chrome cursor-bin visual-studio-code-bin clipse)
+  
+  # Instala com retry em caso de falha de conexão
+  local max_retries=3
+  local retry_count=0
+  
+  while [[ $retry_count -lt $max_retries ]]; do
+    if yay -S --noconfirm --needed "${pkgs[@]}"; then
+      print_info "Aplicativos desktop instalados/atualizados"
+      return 0
+    else
+      retry_count=$((retry_count + 1))
+      if [[ $retry_count -lt $max_retries ]]; then
+        print_warn "Falha na instalação (tentativa $retry_count de $max_retries). Tentando novamente em 5 segundos..."
+        sleep 5
+      else
+        print_warn "Alguns aplicativos podem não ter sido instalados devido a problemas de conexão."
+        print_info "Você pode executar './post-install.sh' novamente ou instalar manualmente com yay."
+        return 0  # Não falha o script inteiro
+      fi
+    fi
+  done
 }
 
 configure_gnome_keyring() {
-  print_step "Configurando GNOME Keyring (Solução Definitiva)"
+  print_step "Configurando GNOME Keyring (Solução Segura)"
+  
+  # Verifica se já está configurado e funcionando
+  local needs_config=false
+  
+  # Verifica se PAM está configurado
+  if ! sudo grep -q "pam_gnome_keyring.so" /etc/pam.d/login || \
+     ! sudo grep -q "pam_gnome_keyring.so" /etc/pam.d/system-login; then
+    needs_config=true
+    print_info "PAM precisa ser configurado para GNOME Keyring"
+  fi
+  
+  # Verifica se Hyprland está configurado
+  local hypr_config="$HOME/.config/hypr/hyprland.conf"
+  if [[ -f "$hypr_config" ]] && ! grep -q "gnome-keyring-daemon --start --components" "$hypr_config"; then
+    needs_config=true
+    print_info "Hyprland precisa ser configurado para GNOME Keyring"
+  fi
+  
+  # Verifica se chrome-flags está configurado corretamente
+  local chrome_flags="$HOME/.config/chrome-flags.conf"
+  if [[ ! -f "$chrome_flags" ]] || ! grep -q "password-store=gnome" "$chrome_flags"; then
+    needs_config=true
+    print_info "Chrome flags precisam ser configuradas"
+  fi
+  
+  # Se tudo já está configurado, apenas instala pacotes se necessário
+  if [[ "$needs_config" == false ]]; then
+    print_info "GNOME Keyring já está completamente configurado"
+    yay -S --noconfirm --needed gnome-keyring libsecret seahorse
+    return 0
+  fi
   
   # Instala pacotes necessários
   print_info "Instalando gnome-keyring e dependências..."
   yay -S --noconfirm --needed gnome-keyring libsecret seahorse
   
-  # Para processos problemáticos
-  print_info "Parando processos problemáticos..."
-  pkill -f gnome-keyring-daemon || true
-  pkill -f chrome || true
-  sleep 2
-  
-  # Remove autostart conflitante do gnome-keyring-ssh
-  print_info "Removendo autostart conflitante do keyring..."
-  if [[ -f "$HOME/.config/autostart/gnome-keyring-ssh.desktop" ]]; then
-    mv "$HOME/.config/autostart/gnome-keyring-ssh.desktop" "$HOME/.config/autostart/gnome-keyring-ssh.desktop.disabled"
-    print_info "GNOME Keyring SSH autostart removido"
+  # Só para processos e limpa keyrings se for primeira configuração
+  # Verifica se é primeira configuração verificando se já tem backup de keyrings
+  if ! ls "$HOME/.local/share/keyrings.bak."* 2>/dev/null | grep -q .; then
+    print_info "Primeira configuração detectada - limpando configurações antigas..."
+    
+    # Para processos problemáticos
+    print_info "Parando processos problemáticos..."
+    pkill -f gnome-keyring-daemon || true
+    pkill -f chrome || true
+    sleep 2
+    
+    # Remove autostart conflitante do gnome-keyring-ssh
+    if [[ -f "$HOME/.config/autostart/gnome-keyring-ssh.desktop" ]]; then
+      mv "$HOME/.config/autostart/gnome-keyring-ssh.desktop" "$HOME/.config/autostart/gnome-keyring-ssh.desktop.disabled"
+      print_info "GNOME Keyring SSH autostart removido"
+    fi
+    
+    # Limpa keyrings problemáticos
+    if [[ -d "$HOME/.local/share/keyrings" ]]; then
+      local backup_dir="$HOME/.local/share/keyrings.bak.$(date +%Y%m%d%H%M%S)"
+      print_info "Fazendo backup em $backup_dir"
+      mv "$HOME/.local/share/keyrings" "$backup_dir"
+    fi
+    
+    # Limpa sockets do keyring
+    print_info "Limpando sockets do keyring..."
+    rm -rf "$XDG_RUNTIME_DIR/keyring" || true
+    rm -rf "$XDG_RUNTIME_DIR/gnome-keyring" || true
+  else
+    print_info "Configuração existente detectada - preservando keyrings"
   fi
   
-  # Limpa keyrings problemáticos
-  print_info "Limpando keyrings problemáticos..."
-  if [[ -d "$HOME/.local/share/keyrings" ]]; then
-    local backup_dir="$HOME/.local/share/keyrings.bak.$(date +%Y%m%d%H%M%S)"
-    print_info "Fazendo backup em $backup_dir"
-    mv "$HOME/.local/share/keyrings" "$backup_dir"
-  fi
-  
-  # Limpa sockets do keyring
-  print_info "Limpando sockets do keyring..."
-  rm -rf "$XDG_RUNTIME_DIR/keyring" || true
-  rm -rf "$XDG_RUNTIME_DIR/gnome-keyring" || true
-  
-  # Configura PAM corretamente
+  # Configura PAM de forma SEGURA (apenas adiciona, não sobrescreve)
   print_info "Configurando PAM para unlock automático..."
   
   # Backup dos arquivos PAM
@@ -296,27 +440,30 @@ configure_gnome_keyring() {
     print_info "Backup criado: /etc/pam.d/login.bak.keyring"
   fi
   
-  # Configura PAM corretamente se não estiver configurado
-  if ! sudo grep -q "pam_gnome_keyring.so auto_start" /etc/pam.d/login; then
-    print_info "Configurando PAM..."
-    
-    # Cria configuração PAM correta
-    sudo tee /tmp/login.pam > /dev/null << 'EOF'
-#%PAM-1.0
-
-auth       requisite    pam_nologin.so
-auth       include      system-local-login
-auth       optional     pam_gnome_keyring.so
-account    include      system-local-login
-password   include      system-local-login
-session    include      system-local-login
-session    optional     pam_gnome_keyring.so auto_start
-EOF
-    
-    sudo mv /tmp/login.pam /etc/pam.d/login
-    print_info "PAM configurado!"
+  if [[ ! -f /etc/pam.d/system-login.bak.keyring ]]; then
+    sudo cp /etc/pam.d/system-login /etc/pam.d/system-login.bak.keyring
+    print_info "Backup criado: /etc/pam.d/system-login.bak.keyring"
+  fi
+  
+  # Configura /etc/pam.d/login - adiciona apenas se não existir
+  if ! sudo grep -q "pam_gnome_keyring.so" /etc/pam.d/login; then
+    print_info "Adicionando gnome-keyring ao /etc/pam.d/login..."
+    # Adiciona auth após a linha system-local-login
+    sudo sed -i '/auth.*include.*system-local-login/a auth       optional     pam_gnome_keyring.so' /etc/pam.d/login
+    # Adiciona session no final do arquivo
+    echo "session    optional     pam_gnome_keyring.so auto_start" | sudo tee -a /etc/pam.d/login > /dev/null
+    print_info "PAM login configurado!"
   else
-    print_info "PAM já configurado corretamente"
+    print_info "PAM login já possui gnome-keyring configurado"
+  fi
+  
+  # Configura /etc/pam.d/system-login - adiciona apenas se não existir
+  if ! sudo grep -q "pam_gnome_keyring.so" /etc/pam.d/system-login; then
+    print_info "Adicionando gnome-keyring ao /etc/pam.d/system-login..."
+    echo "session    optional     pam_gnome_keyring.so auto_start" | sudo tee -a /etc/pam.d/system-login > /dev/null
+    print_info "PAM system-login configurado!"
+  else
+    print_info "PAM system-login já possui gnome-keyring configurado"
   fi
   
   # Configura Hyprland corretamente
@@ -409,6 +556,87 @@ configure_hyprland_bindings() {
   fi
   
   print_info "Configuração de atalhos do Hyprland concluída"
+}
+
+configure_omarchy_logout() {
+  print_step "Configurando logout no menu de power do Omarchy"
+  
+  local omarchy_menu="$HOME/.local/share/omarchy/bin/omarchy-menu"
+  
+  if [[ ! -f "$omarchy_menu" ]]; then
+    print_warn "Omarchy menu não encontrado: $omarchy_menu"
+    return 0
+  fi
+  
+  # Backup do script original
+  if [[ ! -f "$omarchy_menu.bak.logout" ]]; then
+    cp "$omarchy_menu" "$omarchy_menu.bak.logout"
+    print_info "Backup criado: $omarchy_menu.bak.logout"
+  fi
+  
+  # Verificar se já tem logout
+  if grep -q "Logout" "$omarchy_menu"; then
+    print_info "Logout já está configurado no menu"
+    return 0
+  fi
+  
+  # Fazer as modificações necessárias
+  print_info "Adicionando logout ao menu de system..."
+  
+  # 1. Adicionar Logout na linha do menu
+  sed -i 's/󰐥  Shutdown/󰐥  Shutdown\n󰍃  Logout/' "$omarchy_menu"
+  
+  # 2. Adicionar case para Logout após Shutdown
+  sed -i '/\*Shutdown\*) systemctl poweroff ;;/a\  *Logout*) pkill -SIGTERM Hyprland ;;' "$omarchy_menu"
+  
+  # Verificar se a modificação foi bem-sucedida
+  if grep -q "Logout" "$omarchy_menu"; then
+    print_info "Logout adicionado ao menu de power com sucesso!"
+    print_info "Para acessar: SUPER + ESCAPE → Logout"
+  else
+    print_error "Erro ao adicionar logout. Restaurando backup..."
+    cp "$omarchy_menu.bak.logout" "$omarchy_menu"
+    return 1
+  fi
+}
+
+configure_autostart() {
+  print_step "Configurando autostart de aplicações"
+  
+  local autostart_dir="$HOME/.config/autostart"
+  
+  # Criar diretório de autostart se não existir
+  mkdir -p "$autostart_dir"
+  
+  # Configurar ZapZap para monitor 2
+  local zapzap_desktop="$autostart_dir/zapzap.desktop"
+  cat > "$zapzap_desktop" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=ZapZap
+Exec=sh -c 'sleep 10 && until hyprctl clients &>/dev/null; do sleep 1; done && hyprctl dispatch exec "[workspace 2 silent] zapzap"'
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+  print_info "Autostart do ZapZap configurado (workspace 2) com aguardo do Hyprland"
+  
+  # Configurar Slack para monitor 2
+  local slack_desktop="$autostart_dir/slack.desktop"
+  cat > "$slack_desktop" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Slack
+Exec=sh -c 'sleep 15 && until hyprctl clients &>/dev/null; do sleep 1; done && hyprctl dispatch exec "[workspace 2 silent] slack"'
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+  print_info "Autostart do Slack configurado (workspace 2) com aguardo do Hyprland"
+  
+  print_info "Aplicações configuradas para inicializar no workspace 2:"
+  print_info "- ZapZap (aguarda Hyprland + delay 10s)"
+  print_info "- Slack (aguarda Hyprland + delay 15s)"
 }
 
 main "$@"
