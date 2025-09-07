@@ -107,6 +107,7 @@ main() {
   configure_hyprland_bindings
   configure_omarchy_logout
   configure_autostart
+  configure_clipse
   
   print_step "Post-install concluído com sucesso!"
   print_info "Resumo das configurações aplicadas:"
@@ -118,6 +119,7 @@ main() {
   print_info "✓ Atalhos do Hyprland configurados (Signal comentado, WhatsApp → ZapZap)"
   print_info "✓ Menu de power do Omarchy configurado (Logout adicionado)"
   print_info "✓ Autostart configurado (ZapZap e Slack no workspace 2)"
+  print_info "✓ Clipse configurado (Clipboard Manager com ALT + SHIFT + V)"
   print_info ""
   print_info "Este script é idempotente e pode ser executado novamente se necessário."
   print_info "Backups foram criados para todos os arquivos modificados."
@@ -637,6 +639,103 @@ EOF
   print_info "Aplicações configuradas para inicializar no workspace 2:"
   print_info "- ZapZap (aguarda Hyprland + delay 10s)"
   print_info "- Slack (aguarda Hyprland + delay 15s)"
+}
+
+configure_clipse() {
+  print_step "Configurando Clipse (Clipboard Manager)"
+  
+  local hypr_config="$HOME/.config/hypr/hyprland.conf"
+  local bindings_file="$HOME/.config/hypr/bindings.conf"
+  
+  # Verifica se já está configurado
+  local needs_config=false
+  
+  # Verifica exec-once
+  if [[ -f "$hypr_config" ]] && ! grep -q "exec-once = clipse -listen" "$hypr_config"; then
+    needs_config=true
+  fi
+  
+  # Verifica windowrules
+  if [[ -f "$hypr_config" ]] && ! grep -q "windowrulev2 = float,class:(clipse)" "$hypr_config"; then
+    needs_config=true
+  fi
+  
+  # Verifica binding
+  if [[ -f "$bindings_file" ]] && ! grep -q "bind = ALT SHIFT, V, exec, alacritty --class clipse -e 'clipse'" "$bindings_file"; then
+    needs_config=true
+  fi
+  
+  if [[ "$needs_config" == false ]]; then
+    print_info "Clipse já está completamente configurado"
+    return 0
+  fi
+  
+  # Configura exec-once no hyprland.conf
+  if [[ -f "$hypr_config" ]]; then
+    # Backup se ainda não existir
+    if [[ ! -f "$hypr_config.bak.clipse" ]]; then
+      cp "$hypr_config" "$hypr_config.bak.clipse"
+      print_info "Backup criado: $hypr_config.bak.clipse"
+    fi
+    
+    # Adiciona exec-once se não existir
+    if ! grep -q "exec-once = clipse -listen" "$hypr_config"; then
+      cat >> "$hypr_config" << 'EOF'
+
+# Clipse - Clipboard Manager
+exec-once = clipse -listen # run listener on startup
+EOF
+      print_info "Clipse listener adicionado ao exec-once"
+    fi
+    
+    # Adiciona windowrules se não existir
+    if ! grep -q "windowrulev2 = float,class:(clipse)" "$hypr_config"; then
+      cat >> "$hypr_config" << 'EOF'
+
+# Clipse window rules
+windowrulev2 = float,class:(clipse) # ensure floating window
+windowrulev2 = size 622 652,class:(clipse) # set window size
+EOF
+      print_info "Window rules do Clipse adicionadas"
+    fi
+  else
+    print_warn "Arquivo de configuração do Hyprland não encontrado: $hypr_config"
+  fi
+  
+  # Configura binding no bindings.conf
+  if [[ -f "$bindings_file" ]]; then
+    # Backup se ainda não existir
+    if [[ ! -f "$bindings_file.bak.clipse" ]]; then
+      cp "$bindings_file" "$bindings_file.bak.clipse"
+      print_info "Backup criado: $bindings_file.bak.clipse"
+    fi
+    
+    # Adiciona binding se não existir
+    if ! grep -q "bind = ALT SHIFT, V, exec, alacritty --class clipse -e 'clipse'" "$bindings_file"; then
+      # Procura por uma seção de bindings e adiciona após
+      if grep -q "^bind = " "$bindings_file"; then
+        # Adiciona após o último bind existente
+        sed -i '/^bind = /a\
+\
+# Clipse - Clipboard Manager\
+bind = ALT SHIFT, V, exec, alacritty --class clipse -e '"'"'clipse'"'"'' "$bindings_file"
+      else
+        # Se não houver bindings, adiciona no final
+        cat >> "$bindings_file" << 'EOF'
+
+# Clipse - Clipboard Manager
+bind = ALT SHIFT, V, exec, alacritty --class clipse -e 'clipse'
+EOF
+      fi
+      print_info "Atalho do Clipse configurado (ALT + SHIFT + V)"
+    fi
+  else
+    print_warn "Arquivo de bindings do Hyprland não encontrado: $bindings_file"
+  fi
+  
+  print_info "Clipse configurado com sucesso!"
+  print_info "- Listener iniciará automaticamente no boot"
+  print_info "- Use ALT + SHIFT + V para abrir o gerenciador de clipboard"
 }
 
 main "$@"
