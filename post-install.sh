@@ -255,9 +255,15 @@ EOF
     fi
 
     local layout_key variant_key options_key
-    layout_key="${style}_layout"
-    variant_key="${style}_variant"
-    options_key="${style}_options"
+    if [[ "$style" == "xkb" ]]; then
+      layout_key="xkb_layout"
+      variant_key="xkb_variant"
+      options_key="xkb_options"
+    else
+      layout_key="kb_layout"
+      variant_key="kb_variant"
+      options_key="kb_options"
+    fi
 
     # Remove configurações duplicadas fora do bloco input
     sed -i -E "/^input\s*\{/,/^\}/!{/^\s*${layout_key}\s*=/d; /^\s*${variant_key}\s*=/d; /^\s*${options_key}\s*=/d;}" "$hypr_input"
