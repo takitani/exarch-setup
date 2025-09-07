@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple post-install script for Arch + Hyprland
-# First step: update the system with yay: `yay -Syu --noconfirm`
+# Exarch Setup - Post-install script for Arch Linux + Hyprland
+# 
+# Execução remota (sem git clone):
+#   bash <(curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/main/post-install.sh)
+# 
+# Execução local:
+#   ./post-install.sh [--no-install-yay]
 
 CURRENT_STEP=""
 
@@ -112,7 +117,7 @@ main() {
   print_step "Post-install concluído com sucesso!"
   print_info "Resumo das configurações aplicadas:"
   print_info "✓ Sistema atualizado via yay"
-  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack, Chrome, Cursor, VSCode, Clipse)"
+  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack, Chrome, Cursor, VSCode, Clipse, JetBrains Toolbox)"
   print_info "✓ Locale configurado (interface EN, formatação BR)"
   print_info "✓ Layout de teclado US-Intl configurado com cedilha correto (ç)"
   print_info "✓ GNOME Keyring configurado para unlock automático"
@@ -237,63 +242,77 @@ EOF
   # Hyprland input.conf
   local hypr_input="$HOME/.config/hypr/input.conf"
   if [[ -f "$hypr_input" ]]; then
-    # Faz backup se ainda não existir
-    if [[ ! -f "$hypr_input.bak" ]]; then
-      cp "$hypr_input" "$hypr_input.bak"
-      print_info "Backup criado: $hypr_input.bak"
+    # Cria backup com timestamp para preservar histórico
+    local backup_file="$hypr_input.bak.$(date +%Y%m%d%H%M%S)"
+    cp "$hypr_input" "$backup_file"
+    print_info "Backup criado: $backup_file"
+
+    # Detecta e remove configurações incorretas (xkb_* que não funcionam)
+    local needs_fix=false
+    if grep -qE '^\s*(xkb_layout|xkb_variant|xkb_options)\s*=' "$hypr_input"; then
+      print_info "Detectadas configurações xkb_* incorretas, corrigindo..."
+      needs_fix=true
+      # Remove todas as configurações xkb_* incorretas
+      sed -i -E '/^\s*(xkb_layout|xkb_variant|xkb_options)\s*=/d' "$hypr_input"
     fi
 
-    # Detecta estilo de chaves (xkb_* em versões novas; kb_* em antigas)
-    local style="xkb"
-    if grep -qE '^\s*xkb_layout\s*=' "$hypr_input"; then
-      style="xkb"
-    elif grep -qE '^\s*kb_layout\s*=' "$hypr_input"; then
-      style="kb"
-    else
-      # Se não há nenhuma, preferimos xkb_* (versões novas)
-      style="xkb"
-    fi
-
-    local layout_key variant_key options_key
-    if [[ "$style" == "xkb" ]]; then
-      layout_key="xkb_layout"
-      variant_key="xkb_variant"
-      options_key="xkb_options"
-    else
-      layout_key="kb_layout"
-      variant_key="kb_variant"
-      options_key="kb_options"
-    fi
+    # Hyprland usa kb_* (não xkb_*)
+    local layout_key="kb_layout"
+    local variant_key="kb_variant"
+    local options_key="kb_options"
 
     # Remove configurações duplicadas fora do bloco input
-    sed -i -E "/^input\s*\{/,/^\}/!{/^\s*${layout_key}\s*=/d; /^\s*${variant_key}\s*=/d; /^\s*${options_key}\s*=/d;}" "$hypr_input"
+    sed -i -E "/^input\s*\{/,/^\}/!{/^\s*(${layout_key}|${variant_key}|${options_key})\s*=/d;}" "$hypr_input"
+
+    # Verifica se o bloco input existe
+    if ! grep -q "^input\s*{" "$hypr_input"; then
+      print_warn "Bloco 'input' não encontrado no arquivo, criando..."
+      echo -e "\ninput {\n}" >> "$hypr_input"
+    fi
 
     # Define layout us dentro do bloco input (apenas US Internacional)
     if grep -qE "^\s*${layout_key}\s*=" "$hypr_input"; then
+      # Substitui valor existente
       sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us/" "$hypr_input"
+      print_info "Atualizado: ${layout_key} = us"
     else
-      # Adiciona dentro do bloco input, antes do fechamento
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${layout_key} = us" "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${layout_key} = us" "$hypr_input"
-    fi
-
-    # Define options compose:caps dentro do bloco input (sem toggle de layout)
-    if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
-      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
-    else
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${options_key} = compose:caps" "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${options_key} = compose:caps" "$hypr_input"
+      # Adiciona dentro do bloco input
+      sed -i "/^input\s*{/a\\    ${layout_key} = us" "$hypr_input"
+      print_info "Adicionado: ${layout_key} = us"
     fi
 
     # Define variant intl dentro do bloco input
     if grep -qE "^\s*${variant_key}\s*=" "$hypr_input"; then
+      # Substitui valor existente
       sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl/" "$hypr_input"
+      print_info "Atualizado: ${variant_key} = intl"
     else
-      sed -i -E "/^input\s*\{/,/^\}/ { /^\}/ i\\n${variant_key} = intl" "$hypr_input" || \
-      sed -i -E "/^input\s*\{/ a\\n${variant_key} = intl" "$hypr_input"
+      # Adiciona dentro do bloco input
+      sed -i "/^input\s*{/a\\    ${variant_key} = intl" "$hypr_input"
+      print_info "Adicionado: ${variant_key} = intl"
     fi
 
-    print_info "Hyprland: ${layout_key}/variants/options configurados (US-Intl com cedilha)"
+    # Define options compose:caps dentro do bloco input
+    if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
+      # Substitui valor existente
+      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
+      print_info "Atualizado: ${options_key} = compose:caps"
+    else
+      # Adiciona dentro do bloco input
+      sed -i "/^input\s*{/a\\    ${options_key} = compose:caps" "$hypr_input"
+      print_info "Adicionado: ${options_key} = compose:caps"
+    fi
+
+    # Valida que as configurações estão corretas
+    if grep -qE "^\s*${layout_key}\s*=\s*us" "$hypr_input" && \
+       grep -qE "^\s*${variant_key}\s*=\s*intl" "$hypr_input" && \
+       grep -qE "^\s*${options_key}\s*=\s*compose:caps" "$hypr_input"; then
+      print_info "✓ Configuração do teclado validada com sucesso"
+    else
+      print_warn "⚠ Configuração pode estar incompleta, verifique $hypr_input"
+    fi
+
+    print_info "Hyprland: kb_layout/kb_variant/kb_options configurados (US-Intl com cedilha)"
   else
     print_warn "Hyprland: arquivo não encontrado: $hypr_input (pulando)"
   fi
@@ -345,7 +364,7 @@ EOF
 
 install_desktop_apps() {
   print_step "Instalando aplicativos desktop"
-  local pkgs=(mission-center discord zapzap cpu-x slack-desktop google-chrome cursor-bin visual-studio-code-bin clipse)
+  local pkgs=(mission-center discord zapzap cpu-x slack-desktop google-chrome cursor-bin visual-studio-code-bin clipse jetbrains-toolbox)
   
   # Instala com retry em caso de falha de conexão
   local max_retries=3
