@@ -162,32 +162,25 @@ set_locale_ptbr() {
 configure_keyboard_layout() {
   print_step "Configurando layout de teclado US-Intl com cedilha (Hyprland + Waybar)"
 
-  # Configura variáveis de ambiente para cedilha correto
-  local env_file="$HOME/.config/environment.d/50-cedilla.conf"
-  mkdir -p "$HOME/.config/environment.d"
+  # IMPORTANTE: No Wayland, o cedilha funciona através de:
+  # 1. LC_CTYPE=pt_BR.UTF-8 (já configurado no locale)
+  # 2. .XCompose com as regras de composição
+  # 3. kb_variant=intl no Hyprland
+  # NÃO usamos GTK_IM_MODULE pois causa conflitos com Wayland!
   
-  if [[ ! -f "$env_file" ]] || ! grep -q "GTK_IM_MODULE=cedilla" "$env_file"; then
-    cat > "$env_file" << 'EOF'
-# Configuração para cedilha correto (ç ao invés de ć)
-GTK_IM_MODULE=cedilla
-QT_IM_MODULE=cedilla
-EOF
-    print_info "Variáveis de ambiente para cedilha configuradas em $env_file"
-  else
-    print_info "Variáveis de ambiente para cedilha já configuradas"
+  # Limpa configurações antigas problemáticas se existirem
+  local env_file="$HOME/.config/environment.d/50-cedilla.conf"
+  if [[ -f "$env_file" ]]; then
+    print_info "Removendo configurações antigas de IM_MODULE que causam conflitos..."
+    rm -f "$env_file"
   fi
-
-  # Adiciona ao .bashrc se não existir
-  if ! grep -q "export GTK_IM_MODULE=cedilla" "$HOME/.bashrc"; then
-    cat >> "$HOME/.bashrc" << 'EOF'
-
-# Configuração para cedilha correto (ç ao invés de ć)
-export GTK_IM_MODULE=cedilla
-export QT_IM_MODULE=cedilla
-EOF
-    print_info "Variáveis de cedilha adicionadas ao .bashrc"
-  else
-    print_info "Variáveis de cedilha já existem no .bashrc"
+  
+  # Remove do .bashrc se existir
+  if grep -q "export GTK_IM_MODULE=cedilla" "$HOME/.bashrc"; then
+    print_info "Limpando configurações antigas do .bashrc..."
+    sed -i '/# Configuração para cedilha correto/d' "$HOME/.bashrc"
+    sed -i '/export GTK_IM_MODULE=cedilla/d' "$HOME/.bashrc"
+    sed -i '/export QT_IM_MODULE=cedilla/d' "$HOME/.bashrc"
   fi
 
   # Configura .XCompose para cedilha correto
@@ -247,13 +240,13 @@ EOF
     cp "$hypr_input" "$backup_file"
     print_info "Backup criado: $backup_file"
 
-    # Detecta e remove configurações incorretas (xkb_* que não funcionam)
+    # Detecta e remove configurações incorretas (xkb_* que não funcionam ou nkb_* mal formadas)
     local needs_fix=false
-    if grep -qE '^\s*(xkb_layout|xkb_variant|xkb_options)\s*=' "$hypr_input"; then
-      print_info "Detectadas configurações xkb_* incorretas, corrigindo..."
+    if grep -qE '^\s*(xkb_layout|xkb_variant|xkb_options|nkb_variant|nkb_layout|nkb_options)\s*=' "$hypr_input"; then
+      print_info "Detectadas configurações incorretas (xkb_* ou nkb_*), corrigindo..."
       needs_fix=true
-      # Remove todas as configurações xkb_* incorretas
-      sed -i -E '/^\s*(xkb_layout|xkb_variant|xkb_options)\s*=/d' "$hypr_input"
+      # Remove todas as configurações incorretas
+      sed -i -E '/^\s*(xkb_layout|xkb_variant|xkb_options|nkb_variant|nkb_layout|nkb_options)\s*=/d' "$hypr_input"
     fi
 
     # Hyprland usa kb_* (não xkb_*)
@@ -270,37 +263,59 @@ EOF
       echo -e "\ninput {\n}" >> "$hypr_input"
     fi
 
-    # Define layout us dentro do bloco input (apenas US Internacional)
-    if grep -qE "^\s*${layout_key}\s*=" "$hypr_input"; then
-      # Substitui valor existente
-      sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us/" "$hypr_input"
-      print_info "Atualizado: ${layout_key} = us"
-    else
-      # Adiciona dentro do bloco input
-      sed -i "/^input\s*{/a\\    ${layout_key} = us" "$hypr_input"
-      print_info "Adicionado: ${layout_key} = us"
+    # Verifica quais configurações precisam ser adicionadas
+    local need_layout=true
+    local need_variant=true  
+    local need_options=true
+    
+    grep -qE "^\s*${layout_key}\s*=" "$hypr_input" && need_layout=false
+    grep -qE "^\s*${variant_key}\s*=" "$hypr_input" && need_variant=false
+    grep -qE "^\s*${options_key}\s*=" "$hypr_input" && need_options=false
+    
+    # Se precisar adicionar alguma configuração, faz tudo de uma vez
+    if [[ "$need_layout" == true ]] || [[ "$need_variant" == true ]] || [[ "$need_options" == true ]]; then
+      # Cria um arquivo temporário com as configurações
+      local temp_config=$(mktemp)
+      
+      # Copia o conteúdo até o input {
+      sed '/^input\s*{/q' "$hypr_input" > "$temp_config"
+      
+      # Adiciona as configurações necessárias
+      [[ "$need_layout" == false ]] || echo "    ${layout_key} = us" >> "$temp_config"
+      [[ "$need_variant" == false ]] || echo "    ${variant_key} = intl" >> "$temp_config"
+      [[ "$need_options" == false ]] || echo "    ${options_key} = compose:caps" >> "$temp_config"
+      
+      # Adiciona o resto do arquivo (exceto a linha input {)
+      sed '1,/^input\s*{/d' "$hypr_input" >> "$temp_config"
+      
+      # Substitui o arquivo original
+      mv "$temp_config" "$hypr_input"
+      
+      [[ "$need_layout" == false ]] || print_info "Adicionado: ${layout_key} = us"
+      [[ "$need_variant" == false ]] || print_info "Adicionado: ${variant_key} = intl"
+      [[ "$need_options" == false ]] || print_info "Adicionado: ${options_key} = compose:caps"
     fi
-
-    # Define variant intl dentro do bloco input
-    if grep -qE "^\s*${variant_key}\s*=" "$hypr_input"; then
-      # Substitui valor existente
-      sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl/" "$hypr_input"
-      print_info "Atualizado: ${variant_key} = intl"
-    else
-      # Adiciona dentro do bloco input
-      sed -i "/^input\s*{/a\\    ${variant_key} = intl" "$hypr_input"
-      print_info "Adicionado: ${variant_key} = intl"
+    
+    # Atualiza valores existentes se necessário
+    if [[ "$need_layout" == false ]]; then
+      if ! grep -qE "^\s*${layout_key}\s*=\s*us" "$hypr_input"; then
+        sed -i -E "s/^\s*${layout_key}\s*=.*/${layout_key} = us/" "$hypr_input"
+        print_info "Atualizado: ${layout_key} = us"
+      fi
     fi
-
-    # Define options compose:caps dentro do bloco input
-    if grep -qE "^\s*${options_key}\s*=" "$hypr_input"; then
-      # Substitui valor existente
-      sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
-      print_info "Atualizado: ${options_key} = compose:caps"
-    else
-      # Adiciona dentro do bloco input
-      sed -i "/^input\s*{/a\\    ${options_key} = compose:caps" "$hypr_input"
-      print_info "Adicionado: ${options_key} = compose:caps"
+    
+    if [[ "$need_variant" == false ]]; then
+      if ! grep -qE "^\s*${variant_key}\s*=\s*intl" "$hypr_input"; then
+        sed -i -E "s/^\s*${variant_key}\s*=.*/${variant_key} = intl/" "$hypr_input"
+        print_info "Atualizado: ${variant_key} = intl"
+      fi
+    fi
+    
+    if [[ "$need_options" == false ]]; then
+      if ! grep -qE "^\s*${options_key}\s*=\s*compose:caps" "$hypr_input"; then
+        sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
+        print_info "Atualizado: ${options_key} = compose:caps"
+      fi
     fi
 
     # Valida que as configurações estão corretas
