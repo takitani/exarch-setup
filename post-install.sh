@@ -4,7 +4,7 @@ set -euo pipefail
 # Exarch Setup - Post-install script for Arch Linux + Hyprland
 # 
 # Execução remota (sem git clone):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/main/post-install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/takitani/exarch-setup/main/post-install.sh)
 # 
 # Execução local:
 #   ./post-install.sh [--no-install-yay]

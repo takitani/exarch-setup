@@ -8,13 +8,13 @@ Execute o script diretamente sem clonar o repositório:
 
 ```bash
 # Via curl
-bash <(curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/main/post-install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/takitani/exarch-setup/main/post-install.sh)
 
 # Via wget
-bash <(wget -qO- https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/main/post-install.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/takitani/exarch-setup/main/post-install.sh)
 
 # Com opções (exemplo: sem instalar yay)
-bash <(curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/main/post-install.sh) --no-install-yay
+bash <(curl -fsSL https://raw.githubusercontent.com/takitani/exarch-setup/main/post-install.sh) --no-install-yay
 ```
 
 ## 📦 O que o script faz
@@ -54,7 +54,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/exarch-setup/mai
 
 ```bash
 # Clone o repositório
-git clone https://github.com/SEU_USUARIO/exarch-setup.git
+git clone https://github.com/takitani/exarch-setup.git
 cd exarch-setup
 
 # Torne o script executável
