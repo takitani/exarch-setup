@@ -113,11 +113,13 @@ main() {
   configure_omarchy_logout
   configure_autostart
   configure_clipse
+  fix_nautilus_cursor
+  configure_aws_vpn
   
   print_step "Post-install concluído com sucesso!"
   print_info "Resumo das configurações aplicadas:"
   print_info "✓ Sistema atualizado via yay"
-  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack, Chrome, Cursor, VSCode, Clipse, JetBrains Toolbox)"
+  print_info "✓ Aplicativos desktop instalados (Mission Center, Discord, ZapZap, CPU-X, Slack, Chrome, Cursor, VSCode, Clipse, JetBrains Toolbox, AWS VPN Client)"
   print_info "✓ Locale configurado (interface EN, formatação BR)"
   print_info "✓ Layout de teclado US-Intl configurado com cedilha correto (ç)"
   print_info "✓ GNOME Keyring configurado para unlock automático"
@@ -125,6 +127,8 @@ main() {
   print_info "✓ Menu de power do Omarchy configurado (Logout adicionado)"
   print_info "✓ Autostart configurado (ZapZap e Slack no workspace 2)"
   print_info "✓ Clipse configurado (Clipboard Manager com ALT + SHIFT + V)"
+  print_info "✓ Nautilus cursor fix aplicado (input methods configurados para ibus)"
+  print_info "✓ AWS VPN Client configurado (systemd-resolved e serviço habilitados)"
   print_info ""
   print_info "Este script é idempotente e pode ser executado novamente se necessário."
   print_info "Backups foram criados para todos os arquivos modificados."
@@ -283,7 +287,7 @@ EOF
       # Adiciona as configurações necessárias
       [[ "$need_layout" == false ]] || echo "    ${layout_key} = us" >> "$temp_config"
       [[ "$need_variant" == false ]] || echo "    ${variant_key} = intl" >> "$temp_config"
-      [[ "$need_options" == false ]] || echo "    ${options_key} = compose:caps" >> "$temp_config"
+      [[ "$need_options" == false ]] || echo "    ${options_key} = " >> "$temp_config"
       
       # Adiciona o resto do arquivo (exceto a linha input {)
       sed '1,/^input\s*{/d' "$hypr_input" >> "$temp_config"
@@ -293,7 +297,7 @@ EOF
       
       [[ "$need_layout" == false ]] || print_info "Adicionado: ${layout_key} = us"
       [[ "$need_variant" == false ]] || print_info "Adicionado: ${variant_key} = intl"
-      [[ "$need_options" == false ]] || print_info "Adicionado: ${options_key} = compose:caps"
+      [[ "$need_options" == false ]] || print_info "Adicionado: ${options_key} = (vazio, Caps Lock normal)"
     fi
     
     # Atualiza valores existentes se necessário
@@ -312,16 +316,16 @@ EOF
     fi
     
     if [[ "$need_options" == false ]]; then
-      if ! grep -qE "^\s*${options_key}\s*=\s*compose:caps" "$hypr_input"; then
-        sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = compose:caps/" "$hypr_input"
-        print_info "Atualizado: ${options_key} = compose:caps"
+      if ! grep -qE "^\s*${options_key}\s*=\s*$" "$hypr_input"; then
+        sed -i -E "s/^\s*${options_key}\s*=.*/${options_key} = /" "$hypr_input"
+        print_info "Atualizado: ${options_key} = (vazio, Caps Lock normal)"
       fi
     fi
 
     # Valida que as configurações estão corretas
     if grep -qE "^\s*${layout_key}\s*=\s*us" "$hypr_input" && \
        grep -qE "^\s*${variant_key}\s*=\s*intl" "$hypr_input" && \
-       grep -qE "^\s*${options_key}\s*=\s*compose:caps" "$hypr_input"; then
+       grep -qE "^\s*${options_key}\s*=\s*$" "$hypr_input"; then
       print_info "✓ Configuração do teclado validada com sucesso"
     else
       print_warn "⚠ Configuração pode estar incompleta, verifique $hypr_input"
@@ -379,7 +383,7 @@ EOF
 
 install_desktop_apps() {
   print_step "Instalando aplicativos desktop"
-  local pkgs=(mission-center discord zapzap cpu-x slack-desktop google-chrome cursor-bin visual-studio-code-bin clipse jetbrains-toolbox)
+  local pkgs=(mission-center discord zapzap cpu-x slack-desktop google-chrome cursor-bin visual-studio-code-bin clipse jetbrains-toolbox awsvpnclient)
   
   # Instala com retry em caso de falha de conexão
   local max_retries=3
@@ -776,6 +780,191 @@ EOF
   print_info "Clipse configurado com sucesso!"
   print_info "- Listener iniciará automaticamente no boot"
   print_info "- Use ALT + SHIFT + V para abrir o gerenciador de clipboard"
+}
+
+fix_nautilus_cursor() {
+  print_step "Corrigindo problema do cursor no Nautilus"
+  
+  local envs_file="$HOME/.config/hypr/envs.conf"
+  local needs_config=false
+  
+  # Verifica se já está configurado
+  if [[ -f "$envs_file" ]]; then
+    # Verifica se já tem as configurações do ibus
+    if ! grep -q "GTK_IM_MODULE,ibus" "$envs_file" || \
+       ! grep -q "QT_IM_MODULE,ibus" "$envs_file" || \
+       ! grep -q "XMODIFIERS,@im=ibus" "$envs_file"; then
+      needs_config=true
+    fi
+  else
+    needs_config=true
+  fi
+  
+  if [[ "$needs_config" == false ]]; then
+    print_info "Fix do Nautilus já está configurado"
+    return 0
+  fi
+  
+  # Faz backup se arquivo existe
+  if [[ -f "$envs_file" ]]; then
+    if [[ ! -f "$envs_file.bak.nautilus" ]]; then
+      cp "$envs_file" "$envs_file.bak.nautilus"
+      print_info "Backup criado: $envs_file.bak.nautilus"
+    fi
+  else
+    # Cria o arquivo se não existe
+    touch "$envs_file"
+    print_info "Criado arquivo: $envs_file"
+  fi
+  
+  # Verifica e adiciona cada configuração individualmente para ser idempotente
+  local configs_added=false
+  
+  # GTK_IM_MODULE
+  if ! grep -q "env = GTK_IM_MODULE,ibus" "$envs_file"; then
+    if [[ "$configs_added" == false ]]; then
+      echo "" >> "$envs_file"
+      echo "# Fix para cursor no Nautilus - desabilitar input methods conflitantes" >> "$envs_file"
+      configs_added=true
+    fi
+    echo "env = GTK_IM_MODULE,ibus" >> "$envs_file"
+    print_info "Adicionado: GTK_IM_MODULE=ibus"
+  fi
+  
+  # QT_IM_MODULE
+  if ! grep -q "env = QT_IM_MODULE,ibus" "$envs_file"; then
+    echo "env = QT_IM_MODULE,ibus" >> "$envs_file"
+    print_info "Adicionado: QT_IM_MODULE=ibus"
+  fi
+  
+  # XMODIFIERS
+  if ! grep -q "env = XMODIFIERS,@im=ibus" "$envs_file"; then
+    echo "env = XMODIFIERS,@im=ibus" >> "$envs_file"
+    print_info "Adicionado: XMODIFIERS=@im=ibus"
+  fi
+  
+  # SDL_IM_MODULE
+  if ! grep -q "env = SDL_IM_MODULE,ibus" "$envs_file"; then
+    echo "env = SDL_IM_MODULE,ibus" >> "$envs_file"
+    print_info "Adicionado: SDL_IM_MODULE=ibus"
+  fi
+  
+  # GTK_USE_PORTAL
+  if ! grep -q "env = GTK_USE_PORTAL,1" "$envs_file"; then
+    echo "" >> "$envs_file"
+    echo "# Garantir comportamento correto do GTK" >> "$envs_file"
+    echo "env = GTK_USE_PORTAL,1" >> "$envs_file"
+    print_info "Adicionado: GTK_USE_PORTAL=1"
+  fi
+  
+  # Desabilita fcitx se estiver rodando
+  if pgrep -x fcitx >/dev/null 2>&1; then
+    print_info "Desabilitando fcitx..."
+    pkill -f fcitx || true
+  fi
+  
+  # Reinicia Nautilus se estiver rodando
+  if pgrep -x nautilus >/dev/null 2>&1; then
+    print_info "Reiniciando Nautilus..."
+    nautilus -q 2>/dev/null || true
+  fi
+  
+  print_info "Fix do cursor no Nautilus aplicado com sucesso!"
+  print_info "Se necessário, recarregue o Hyprland com: hyprctl reload"
+}
+
+configure_aws_vpn() {
+  print_step "Configurando AWS VPN Client"
+  
+  # Verifica se o pacote está instalado
+  if ! pacman -Qi awsvpnclient >/dev/null 2>&1; then
+    print_warn "AWS VPN Client não está instalado. Será instalado agora..."
+    # Já está na lista de pacotes do install_desktop_apps
+    return 0
+  fi
+  
+  # 1. Configurar systemd-resolved (necessário para DNS do VPN)
+  print_info "Configurando systemd-resolved para DNS do VPN..."
+  
+  # Verifica se systemd-resolved está habilitado e rodando
+  if ! systemctl is-enabled --quiet systemd-resolved.service; then
+    print_info "Habilitando systemd-resolved..."
+    sudo systemctl enable systemd-resolved.service || true
+  else
+    print_info "systemd-resolved já está habilitado"
+  fi
+  
+  if ! systemctl is-active --quiet systemd-resolved.service; then
+    print_info "Iniciando systemd-resolved..."
+    sudo systemctl start systemd-resolved.service || true
+  else
+    print_info "systemd-resolved já está rodando"
+  fi
+  
+  # Verifica conflitos com outros resolvers
+  if systemctl is-active --quiet dnsmasq.service 2>/dev/null; then
+    print_warn "dnsmasq detectado - pode haver conflito com systemd-resolved"
+    print_warn "Considere desabilitar dnsmasq se houver problemas de DNS com o VPN"
+  fi
+  
+  if systemctl is-active --quiet systemd-networkd.service 2>/dev/null; then
+    print_info "systemd-networkd detectado - compatível com systemd-resolved"
+  fi
+  
+  # 2. Habilitar e iniciar o serviço do AWS VPN Client
+  print_info "Configurando serviço do AWS VPN Client..."
+  
+  if ! systemctl is-enabled --quiet awsvpnclient.service; then
+    print_info "Habilitando awsvpnclient.service..."
+    sudo systemctl enable awsvpnclient.service || true
+  else
+    print_info "awsvpnclient.service já está habilitado"
+  fi
+  
+  if ! systemctl is-active --quiet awsvpnclient.service; then
+    print_info "Iniciando awsvpnclient.service..."
+    sudo systemctl start awsvpnclient.service || true
+  else
+    print_info "awsvpnclient.service já está rodando"
+  fi
+  
+  # 3. Verificar configuração de DNS
+  print_info "Verificando configuração de DNS..."
+  
+  # Criar link simbólico para /etc/resolv.conf se necessário
+  if [[ -f /etc/resolv.conf ]] && [[ ! -L /etc/resolv.conf ]]; then
+    print_info "Configurando /etc/resolv.conf para usar systemd-resolved..."
+    if [[ ! -f /etc/resolv.conf.bak.awsvpn ]]; then
+      sudo cp /etc/resolv.conf /etc/resolv.conf.bak.awsvpn
+      print_info "Backup criado: /etc/resolv.conf.bak.awsvpn"
+    fi
+    sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf || true
+  elif [[ -L /etc/resolv.conf ]]; then
+    local target=$(readlink -f /etc/resolv.conf)
+    if [[ "$target" == "/run/systemd/resolve/stub-resolv.conf" ]] || \
+       [[ "$target" == "/run/systemd/resolve/resolv.conf" ]]; then
+      print_info "DNS já está configurado para systemd-resolved"
+    else
+      print_warn "resolv.conf aponta para: $target"
+      print_warn "Pode ser necessário ajustar manualmente para systemd-resolved"
+    fi
+  fi
+  
+  # 4. Verificar status final
+  print_info "Verificando status dos serviços..."
+  
+  if systemctl is-active --quiet systemd-resolved.service && \
+     systemctl is-active --quiet awsvpnclient.service; then
+    print_info "✓ AWS VPN Client configurado com sucesso!"
+    print_info "- systemd-resolved está ativo para resolver DNS do VPN"
+    print_info "- awsvpnclient.service está rodando"
+    print_info "- Use o AWS VPN Client GUI ou CLI para conectar ao VPN"
+  else
+    print_warn "Verificação de status:"
+    systemctl status systemd-resolved.service --no-pager | head -5 || true
+    systemctl status awsvpnclient.service --no-pager | head -5 || true
+    print_warn "Pode ser necessário reiniciar o sistema para aplicar todas as configurações"
+  fi
 }
 
 main "$@"
